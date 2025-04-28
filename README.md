@@ -1,110 +1,152 @@
-# xTraderz
+# xTraderz 
 
-빠르고 안정적인 트레이딩 시스템 API 서버
+Rust와 Warp로 구축된 고성능 동시처리 주문 매칭 엔진으로, 금융 시장 주문 처리를 위해 설계되었습니다.
 
-## 개요
+## 현재 기능
 
-xTraderz는 고성능 트레이딩 엔진을 제공하는 Rust 기반 API 서버입니다. 주문 처리, 실행 및 관리를 위한 강력한 백엔드 시스템으로 설계되었습니다.
+### 주문 관리
+- **주문 유형**: 지정가 주문 및 시장가 주문 지원
+- **주문 작업**: 새 주문 생성, 기존 주문 취소
+- **주문 상태 추적**: 신규, 부분 체결, 완전 체결, 취소 상태
 
-## 기능
+### 가격-시간 우선순위 매칭
+- **빠른 주문책 구현**: O(1) 주문 삽입 및 매칭
+- **가격-시간 우선순위**: 동일 가격 수준의 주문은 FIFO 순서로 실행
+- **효율적인 주문 취소**: 적절한 자료구조를 통한 O(1) 주문 취소
 
-- 주문 요청 및 처리 (매수/매도)
-- 주문 실행 메커니즘
-- 상태 확인 엔드포인트
-- 견고한 에러 처리
+### 주문책 구조
+- **매수/매도 별도 관리**: 매수 및 매도 주문을 위한 별도의 책
+- **가격 수준 관리**: 가격 수준별로 그룹화된 주문
+- **최적 가격 추적**: 최고 매수/매도 가격에 대한 상수 시간 접근
 
-## 기술 스택
+### 체결 엔진
+- **즉각적인 매칭**: 주문이 반대 방향 주문책과 즉시 매칭
+- **부분 체결**: 부분 주문 실행 지원
+- **체결 보고서**: 거래 양측에 대한 상세 체결 보고서
 
-- **언어**: Rust
-- **웹 프레임워크**: Axum
-- **비동기 런타임**: Tokio
-- **로깅/트레이싱**: tracing, tracing-subscriber
-- **미들웨어**: Tower, Tower-HTTP
+### API 및 통신
+- **RESTful API**: 주문 제출 및 조회를 위한 HTTP 엔드포인트
+- **체결 조회**: 심볼, 주문 ID 및 시간 범위별 체결 필터링
 
-## API 엔드포인트
+### 동시성 모델
+- **Tokio 기반 비동기 처리**: 비동기 태스크 실행을 통한 높은 처리량
+- **채널 기반 통신**: 컴포넌트 간 효율적인 메시지 전달
 
-| 엔드포인트 | 메서드 | 설명 |
-|------------|--------|------|
-| `/orders`  | POST   | 새로운 거래 주문 추가 |
-| `/execute` | POST   | 대기 중인 주문 실행 |
-| `/health`  | GET    | API 서버 상태 확인 |
+### 시스템 아키텍처
+- **컴포넌트 분리**: 주문 관리, 시퀀싱 및 매칭 간의 깔끔한 분리
+- **시퀀서**: 입력 및 출력 시퀀싱을 통한 작업 순서 보장
+- **체결 저장소**: 체결 보고서의 인메모리 저장
+
+## 계획된 기능
+
+### 고급 주문 유형
+- 스탑 주문
+- 즉시-또는-취소(IOC) 주문
+- 전량-또는-취소(FOK) 주문
+- 빙산 주문
+- 알고리즘 주문(TWAP/VWAP)
+
+### 가격 제어 및 서킷 브레이커
+- 일일 가격 제한
+- 서킷 브레이커
+- 거래 중단 관리
+
+### 파생상품 지원
+- 옵션
+- 선물
+- 기타 파생상품
+
+### 수수료 구조
+- 메이커/테이커 수수료 모델
+- 거래량 기반 할인
+- 수수료 프로모션
+
+### 위험 관리
+- 거래 전 위험 검사
+- 거래 한도
+- 증거금 계산
+
+### 알림 및 이벤트
+- 주문 상태 업데이트
+- 가격 알림
+- 대량 거래 알림
+
+### 시장 데이터 서비스
+- L1/L2 데이터 스트림
+- 거래 티커
+- OHLCV 집계
+
+### 계정 관리
+- 포지션 추적
+- 손익 계산
+- 자금 관리
+
+### 시장 조성 인센티브
+- 스프레드 요구사항
+- 거래량 요구사항
+- 리베이트 구조
+
+### 상품 및 시장 관리
+- 다중 시장 지원
+- 거래 시간 및 휴일 관리
+- 기업 이벤트(배당, 분할)
+
+### 주문책 작업
+- 시장 재생 로직
+- 주문책 스냅샷
+- 스냅샷에서 복구
+
+### 규정 준수 및 규제
+- 상세 감사 추적
+- 규제 보고
+- 시장 감시
 
 ## 시작하기
 
 ### 사전 요구사항
+- Rust 및 Cargo
+- Tokio
 
-- Rust 및 Cargo (최신 안정 버전)
-
-### 설치 및 실행
-
-1. 저장소 클론
-   ```bash
-   git clone https://github.com/yourusername/xtraderz.git
-   cd xtraderz
-   ```
-
-2. 빌드
-   ```bash
-   cargo build --release
-   ```
-
-3. 실행
-   ```bash
-   cargo run --release
-   ```
-
-서버는 기본적으로 `http://127.0.0.1:3030`에서 실행됩니다.
-
-## 사용 예시
-
-### 새 주문 추가
-
+### 설치
 ```bash
-curl -X POST http://localhost:3030/orders \
+# 저장소 복제
+git clone https://github.com/yourusername/order-matching-engine.git
+cd order-matching-engine
+
+# 프로젝트 빌드
+cargo build --release
+
+# 애플리케이션 실행
+cargo run --release
+```
+
+### API 사용법
+
+#### 새 주문 생성
+```bash
+curl -X POST http://localhost:3030/v1/order \
   -H "Content-Type: application/json" \
-  -d '{
-    "symbol": "BTCUSD",
-    "quantity": 0.5,
-    "price": 45000,
-    "side": "buy",
-    "order_type": "limit"
-  }'
+  -d '{"symbol":"AAPL","side":"Buy","price":150,"order_type":"Limit","quantity":100}'
 ```
 
-### 주문 실행
+#### 주문 취소
+```bash
+curl -X POST http://localhost:3030/v1/order/cancel \
+  -H "Content-Type: application/json" \
+  -d '{"order_id":"12345"}'
+```
+
+#### 체결 조회
+```bash
+curl -X GET "http://localhost:3030/v1/execution?symbol=AAPL&order_id=12345"
+```
+
+## 테스트
+
+다음 명령으로 테스트를 실행하세요:
 
 ```bash
-curl -X POST http://localhost:3030/execute
+cargo test
 ```
 
-### 상태 확인
-
-```bash
-curl http://localhost:3030/health
-```
-
-## 성능 최적화
-
-xTraderz는 다음과 같은 성능 최적화를 통해 빠른 실행 시간을 보장합니다:
-
-- Axum의 비동기 처리 활용
-- Tower 미들웨어를 통한 타임아웃 및 오류 처리
-- 트레이싱 레이어를 통한 성능 모니터링
-
-## 기여하기
-
-1. 이 저장소를 포크합니다
-2. 기능 브랜치를 생성합니다 (`git checkout -b feature/amazing-feature`)
-3. 변경사항을 커밋합니다 (`git commit -m 'Add some amazing feature'`)
-4. 브랜치에 푸시합니다 (`git push origin feature/amazing-feature`)
-5. Pull Request를 생성합니다
-
-## 라이선스
-
-[MIT](LICENSE)
-
-## 연락처
-
-프로젝트 관리자: HAMA - hama@example.com
-
-프로젝트 링크: [https://github.com/yourusername/xtraderz](https://github.com/yourusername/xtraderz)
+통합 테스트는 제출부터 매칭 및 실행에 이르는 전체 주문 흐름을 보여줍니다.
