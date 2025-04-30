@@ -54,16 +54,16 @@ pub struct Execution {
   pub transaction_time: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct OrderMessage(pub Order);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct OrderReference {
   pub price: u64,
   pub position: usize, // Position in the queue for O(1) access
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PriceLevel {
   pub price: u64,
   pub total_volume: u64,
@@ -119,7 +119,7 @@ impl PriceLevel {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Book {
   pub side: Side,
   pub limits: BTreeMap<u64, PriceLevel>,
@@ -201,7 +201,7 @@ impl Book {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct OrderBook {
   pub buy_book: Book,
   pub sell_book: Book,
