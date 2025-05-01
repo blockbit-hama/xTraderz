@@ -17,7 +17,9 @@ use url::Url;
 
 /// 주문 시뮬레이션 예제
 /// 이 예제는 주문 매칭 엔진에 다수의 주문을 연속적으로 제출하여
-/// 실제 거래 환경을 시뮬레이션합니다.
+/// 실제 거래 환경을 시뮬레이션합니다. 시뮬레이션 중에는 체결 정보를
+/// WebSocket으로 수신하고, Market Data Publisher API를 통해
+/// 오더북과 캔들스틱 데이터를 정기적으로 조회합니다.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
   // 서버 URL 설정
@@ -30,70 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
   println!("주문 시뮬레이션 시작");
   println!("--------------------");
   
-  // 오더북 WebSocket 연결
-  let orderbook_url = Url::parse(&format!("{}/ws/orderbook/BTC-KRW", ws_base))?;
-  let (orderbook_ws, _) = connect_async(orderbook_url).await?;
-  let (mut ob_write, mut ob_read) = orderbook_ws.split();
-  
-  println!("오더북 스트림에 연결됨 (BTC-KRW)");
-  
-  // 오더북 모니터링 작업
-  let ob_task = tokio::spawn(async move {
-    let mut prev_bid_price = 0;
-    let mut prev_ask_price = u64::MAX;
-    
-    while let Some(msg) = ob_read.next().await {
-      if let Ok(Message::Text(text)) = msg {
-        let json: Value = match serde_json::from_str(&text) {
-          Ok(json) => json,
-          Err(_) => continue,
-        };
-        
-        // 최고 매수가 및 최저 매도가 추출
-        let data = match json.get("data") {
-          Some(data) => data,
-          None => continue,
-        };
-        
-        // 매수 호가 확인
-        let bids = match data["bids"].as_array() {
-          Some(bids) if !bids.is_empty() => bids,
-          _ => continue,
-        };
-        
-        // 매도 호가 확인
-        let asks = match data["asks"].as_array() {
-          Some(asks) if !asks.is_empty() => asks,
-          _ => continue,
-        };
-        
-        // 최고 매수가
-        let top_bid = match bids[0]["price"].as_u64() {
-          Some(price) => price,
-          None => continue,
-        };
-        
-        // 최저 매도가
-        let top_ask = match asks[0]["price"].as_u64() {
-          Some(price) => price,
-          None => continue,
-        };
-        
-        // 변화가 있을 때만 출력
-        if top_bid != prev_bid_price || top_ask != prev_ask_price {
-          println!("\n현재 시장 상태:");
-          println!("최고 매수가: {}", format_price(top_bid));
-          println!("최저 매도가: {}", format_price(top_ask));
-          println!("스프레드: {}", format_price(top_ask.saturating_sub(top_bid)));
-          
-          prev_bid_price = top_bid;
-          prev_ask_price = top_ask;
-        }
-      }
-    }
-  });
-  
-  // 체결 모니터링용 WebSocket 연결
+  // 체결 수신용 WebSocket 연결
   let executions_url = Url::parse(&format!("{}/ws/executions", ws_base))?;
   let (executions_ws, _) = connect_async(executions_url).await?;
   let (mut exec_write, mut exec_read) = executions_ws.split();
@@ -102,6 +41,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
   
   // 체결 모니터링 작업
   let exec_task = tokio::spawn(async move {
+    let mut execution_count = 0;
+    
     while let Some(msg) = exec_read.next().await {
       if let Ok(Message::Text(text)) = msg {
         let json: Value = match serde_json::from_str(&text) {
@@ -109,16 +50,121 @@ async fn main() -> Result<(), Box<dyn Error>> {
           Err(_) => continue,
         };
         
-        println!("\n체결 발생: 가격 {}, 수량 {}, 주문 ID: {}",
+        execution_count += 1;
+        println!("\n체결 #{}: {} - 가격: {}, 수량: {}",
+                 execution_count,
+                 json["symbol"],
                  format_price(json["price"].as_u64().unwrap_or(0)),
-                 json["quantity"],
-                 json["order_id"]);
+                 json["quantity"]);
+      }
+    }
+  });
+  
+  // 오더북 모니터링 작업
+  let client_clone = client.clone();
+  let orderbook_task = tokio::spawn(async move {
+    let mut interval = time::interval(Duration::from_secs(5));
+    
+    loop {
+      interval.tick().await;
+      
+      // 오더북 상태 조회
+      match client_clone.get(&format!("{}/api/v1/orderbook/BTC-KRW", server_base))
+        .send()
+        .await {
+        Ok(resp) if resp.status().is_success() => {
+          if let Ok(orderbook) = resp.json::<Value>().await {
+            let bids = orderbook["bids"].as_array().unwrap_or(&vec![]);
+            let asks = orderbook["asks"].as_array().unwrap_or(&vec![]);
+            
+            // 최고 매수가와 최저 매도가 추출
+            let top_bid = if !bids.is_empty() {
+              bids[0]["price"].as_u64().unwrap_or(0)
+            } else {
+              0
+            };
+            
+            let top_ask = if !asks.is_empty() {
+              asks[0]["price"].as_u64().unwrap_or(0)
+            } else {
+              0
+            };
+            
+            if top_bid > 0 && top_ask > 0 {
+              println!("\n현재 시장 상태:");
+              println!("최고 매수가: {}", format_price(top_bid));
+              println!("최저 매도가: {}", format_price(top_ask));
+              println!("스프레드: {}", format_price(top_ask.saturating_sub(top_bid)));
+              println!("매수 단계: {}, 매도 단계: {}", bids.len(), asks.len());
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  });
+  
+  // 시장 통계 모니터링 작업
+  let client_clone = client.clone();
+  let stats_task = tokio::spawn(async move {
+    let mut interval = time::interval(Duration::from_secs(10));
+    
+    loop {
+      interval.tick().await;
+      
+      // 시장 통계 조회
+      match client_clone.get(&format!("{}/api/v1/statistics/BTC-KRW", server_base))
+        .send()
+        .await {
+        Ok(resp) if resp.status().is_success() => {
+          if let Ok(stats) = resp.json::<Value>().await {
+            println!("\n24시간 시장 통계:");
+            println!("마지막 가격: {}", format_price(stats["last_price"].as_u64().unwrap_or(0)));
+            println!("24시간 고가: {}", format_price(stats["high_price_24h"].as_u64().unwrap_or(0)));
+            println!("24시간 저가: {}", format_price(stats["low_price_24h"].as_u64().unwrap_or(0)));
+            println!("24시간 거래량: {}", stats["volume_24h"]);
+            println!("24시간 변동률: {}%", stats["price_change_24h"]);
+          }
+        },
+        _ => {}
+      }
+    }
+  });
+  
+  // 캔들스틱 모니터링 작업
+  let client_clone = client.clone();
+  let candle_task = tokio::spawn(async move {
+    let mut interval = time::interval(Duration::from_secs(30));
+    
+    loop {
+      interval.tick().await;
+      
+      // 1분봉 데이터 조회
+      match client_clone.get(&format!("{}/api/v1/klines/BTC-KRW/1m?limit=1", server_base))
+        .send()
+        .await {
+        Ok(resp) if resp.status().is_success() => {
+          if let Ok(candles) = resp.json::<Vec<Value>>().await {
+            if !candles.is_empty() {
+              let candle = &candles[0];
+              println!("\n최근 1분봉:");
+              println!("시간: {}", candle["open_time"]);
+              println!("시가: {}", format_price(candle["open"].as_u64().unwrap_or(0)));
+              println!("고가: {}", format_price(candle["high"].as_u64().unwrap_or(0)));
+              println!("저가: {}", format_price(candle["low"].as_u64().unwrap_or(0)));
+              println!("종가: {}", format_price(candle["close"].as_u64().unwrap_or(0)));
+              println!("거래량: {}", candle["volume"]);
+              println!("거래 횟수: {}", candle["trade_count"]);
+            }
+          }
+        },
+        _ => {}
       }
     }
   });
   
   // 시뮬레이션 파라미터
-  let simulation_time = Duration::from_secs(60); // 시뮬레이션 실행 시간
+  let simulation_time = Duration::from_secs(120); // 시뮬레이션 실행 시간
   let base_price = 50_000_000; // 기준 가격 (5천만원)
   let price_volatility = 0.02; // 가격 변동성 (±2%)
   let order_interval = Duration::from_millis(500); // 주문 간격
@@ -173,8 +219,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     
     // 무작위로 기존 주문 취소 (25% 확률)
     if rng.gen::<f64>() < 0.25 && order_count > 0 {
-      // 취소할 주문 ID 가져오기 (실제로는 응답에서 얻어야 함)
-      // 예제에서는 간단하게 마지막 주문을 취소하는 것으로 가정
+      // 취소할 주문 ID 가져오기
       let order_id = order_data["order_id"].as_str().unwrap_or("");
       
       let cancel_req = json!({
@@ -198,19 +243,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
   tokio::time::sleep(Duration::from_secs(2)).await;
   
   // 체결 내역 조회
-  let resp = client.get(&format!("{}/v1/execution?symbol=BTC-KRW", server_base))
+  let resp = client.get(&format!("{}/api/v1/executions/BTC-KRW?limit=10", server_base))
     .send()
     .await?;
   
   if resp.status().is_success() {
     let executions: Vec<Value> = resp.json().await?;
     println!("\n총 체결 수: {}", executions.len());
+    
+    println!("\n최근 체결 내역:");
+    for (i, exec) in executions.iter().enumerate() {
+      println!("#{}: 시간: {}, 가격: {}, 수량: {}, 방향: {}",
+               i + 1,
+               exec["timestamp"],
+               format_price(exec["price"].as_u64().unwrap_or(0)),
+               exec["volume"],
+               exec["side"]);
+    }
   }
   
   // 작업 정리
   println!("\n프로그램 종료...");
-  ob_task.abort();
   exec_task.abort();
+  orderbook_task.abort();
+  stats_task.abort();
+  candle_task.abort();
   
   Ok(())
 }

@@ -1,15 +1,10 @@
-# WebSocket 프로토콜 문서
+# WebSocket 체결 알림 프로토콜
 
-이 문서는 주문 매칭 엔진의 WebSocket 프로토콜에 대한 상세 정보를 제공합니다.
+이 문서는 주문 매칭 엔진의 WebSocket 체결 알림 기능에 대한 상세 정보를 제공합니다.
 
 ## 개요
 
-주문 매칭 엔진은 두 개의 독립적인 WebSocket 서비스를 제공합니다:
-
-1. **체결 스트림**: 실시간 체결 정보 제공 (모든 체결 브로드캐스트)
-2. **오더북 스트림**: 실시간 오더북 상태 및 변경사항 제공 (심볼별 구독)
-
-이 두 스트림은 **주문 처리 파이프라인과 완전히 독립적**으로 작동합니다. 이는 UI 업데이트 트래픽이 핵심 거래 기능에 영향을 주지 않도록 하기 위한 설계입니다.
+주문 매칭 엔진은 체결 정보를 실시간으로 클라이언트에게 푸시하기 위한 WebSocket 인터페이스를 제공합니다. 이 인터페이스는 주문 처리 파이프라인과 독립적으로 작동하므로, 많은 수의 클라이언트 연결이 핵심 매칭 기능에 영향을 주지 않습니다.
 
 ## 연결 정보
 
@@ -79,162 +74,11 @@ socket.onerror = (error) => {
 };
 ```
 
-## 오더북 스트림
+## 주의사항
 
-### 연결 URL
-
-```
-ws://127.0.0.1:3030/ws/orderbook/{symbol}
-```
-
-여기서 `{symbol}`은 구독하려는 거래 심볼입니다. 예: `BTC-KRW`
-
-### 메시지 타입
-
-1. **스냅샷 메시지**: 연결 직후 한 번 전송되는 전체 오더북 스냅샷
-2. **업데이트 메시지**: 오더북 변경 시 전송되는 업데이트 정보
-
-### 스냅샷 메시지 형식
-
-```json
-{
-  "type": "orderbook_snapshot",
-  "data": {
-    "symbol": "BTC-KRW",
-    "timestamp": 1682859310123,
-    "bids": [
-      { "price": 50000000, "volume": 1.5, "order_count": 3 },
-      { "price": 49990000, "volume": 2.7, "order_count": 5 },
-      ...
-    ],
-    "asks": [
-      { "price": 50010000, "volume": 1.2, "order_count": 2 },
-      { "price": 50020000, "volume": 3.4, "order_count": 4 },
-      ...
-    ]
-  }
-}
-```
-
-### 업데이트 메시지 형식
-
-```json
-{
-  "type": "orderbook",
-  "data": {
-    "symbol": "BTC-KRW",
-    "timestamp": 1682859320456,
-    "bids": [
-      { "price": 50000000, "volume": 1.2, "order_count": 2 },
-      { "price": 49990000, "volume": 2.7, "order_count": 5 },
-      ...
-    ],
-    "asks": [
-      { "price": 50010000, "volume": 1.5, "order_count": 3 },
-      { "price": 50020000, "volume": 3.4, "order_count": 4 },
-      ...
-    ]
-  }
-}
-```
-
-### 필드 설명
-
-| 필드           | 타입     | 설명                                      |
-|---------------|----------|-------------------------------------------|
-| type          | string   | 메시지 타입 ("orderbook_snapshot" 또는 "orderbook") |
-| data          | object   | 오더북 데이터                              |
-| symbol        | string   | 거래 심볼                                 |
-| timestamp     | number   | 타임스탬프 (밀리초 단위 UNIX 시간)          |
-| bids          | array    | 매수 호가 배열 (가격 내림차순)               |
-| asks          | array    | 매도 호가 배열 (가격 오름차순)               |
-| price         | number   | 가격 수준                                 |
-| volume        | number   | 해당 가격 수준의 총 수량                    |
-| order_count   | number   | 해당 가격 수준의 주문 수                    |
-
-### 주의사항
-
-1. 스냅샷 메시지는 연결 직후 한 번만 수신됩니다.
-2. 업데이트 메시지는 오더북 변경 시마다 수신되며, 전체 오더북 상태를 포함합니다.
-3. 현재 구현에서는 델타 업데이트가 아닌 전체 상태를 전송합니다. 향후 버전에서는 대역폭 효율성을 위해 델타 업데이트를 제공할 수 있습니다.
-4. 오더북 스트림은 주문 처리 파이프라인과 독립적으로 작동하므로, 일부 지연이 있을 수 있습니다.
-
-### 사용 예시 (JavaScript)
-
-```javascript
-const symbol = 'BTC-KRW';
-const socket = new WebSocket(`ws://127.0.0.1:3030/ws/orderbook/${symbol}`);
-
-let orderbook = {
-  bids: [],
-  asks: []
-};
-
-socket.onopen = () => {
-  console.log(`${symbol} 오더북 스트림에 연결되었습니다.`);
-};
-
-socket.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  
-  if (message.type === 'orderbook_snapshot') {
-    // 초기 스냅샷 처리
-    orderbook = message.data;
-    console.log('오더북 스냅샷 수신:', orderbook);
-    displayOrderbook();
-  } else if (message.type === 'orderbook') {
-    // 업데이트 처리
-    orderbook = message.data;
-    console.log('오더북 업데이트 수신');
-    displayOrderbook();
-  }
-};
-
-function displayOrderbook() {
-  console.log(`${symbol} 오더북 (${new Date(orderbook.timestamp).toLocaleTimeString()})`);
-  
-  console.log('매도 호가:');
-  orderbook.asks.slice(0, 5).reverse().forEach(level => {
-    console.log(`${level.price.toLocaleString()} - ${level.volume} (${level.order_count}개 주문)`);
-  });
-  
-  console.log('매수 호가:');
-  orderbook.bids.slice(0, 5).forEach(level => {
-    console.log(`${level.price.toLocaleString()} - ${level.volume} (${level.order_count}개 주문)`);
-  });
-}
-
-socket.onclose = () => {
-  console.log(`${symbol} 오더북 스트림 연결이 종료되었습니다.`);
-};
-
-socket.onerror = (error) => {
-  console.error('WebSocket 오류:', error);
-};
-```
-
-## 릴레이 서버 (WebSocket 구독 관리)
-
-릴레이 서버는 오더북 데이터를 클라이언트 UI에 효율적으로 중계하는 역할을 담당합니다. 이 서버는 주문 처리 파이프라인과 독립적으로 작동하므로, 많은 수의 UI 클라이언트 연결로 인한 부하가 핵심 거래 기능에 영향을 주지 않습니다.
-
-### 주요 기능
-
-1. **구독 관리**: 클라이언트의 심볼별 구독 요청 처리
-2. **오더북 상태 모니터링**: 매칭 엔진의 오더북 상태 변화 감지
-3. **효율적인 데이터 전달**: 구독 중인 클라이언트에게만 관련 데이터 전송
-
-### 클라이언트 명령어
-
-릴레이 서버는 클라이언트의 다음 명령어를 처리합니다:
-
-1. **구독 요청**: `subscribe:{symbol}`
-2. **구독 해제**: `unsubscribe:{symbol}`
-3. **스냅샷 요청**: `snapshot:{symbol}`
-
-예시:
-- `subscribe:BTC-KRW` - BTC-KRW 오더북 구독
-- `unsubscribe:BTC-KRW` - BTC-KRW 오더북 구독 해제
-- `snapshot:BTC-KRW` - BTC-KRW 오더북 스냅샷 요청
+1. WebSocket 체결 알림은 실시간으로 체결이 발생할 때만 메시지를 전송합니다.
+2. 과거 체결 내역은 Market Data Publisher의 HTTP API(`/api/v1/executions/{symbol}`)를 통해 조회할 수 있습니다.
+3. 현재 구현에서는 클라이언트 인증 메커니즘이 없으므로, 프로덕션 환경에서는 적절한 인증 시스템을 구현해야 합니다.
 
 ## 성능 및 확장성 고려사항
 
@@ -249,14 +93,12 @@ socket.onerror = (error) => {
 
 대역폭 사용량을 줄이기 위해 다음과 같은 최적화를 고려할 수 있습니다:
 - WebSocket 메시지 압축 (RFC 7692)
-- 델타 기반 업데이트 (전체 오더북 대신 변경된 부분만 전송)
 - 이진 메시지 형식 (JSON 대신 Protocol Buffers, MessagePack 등)
 
 ### 부하 분산
 
 많은 수의 클라이언트를 지원하기 위해 다음과 같은 접근 방식을 사용할 수 있습니다:
 - WebSocket 연결을 위한 별도의 서버 풀
-- 심볼별 샤딩 (특정 심볼 그룹을 처리하는 전용 서버)
 - 메시지 브로커 사용 (Redis PubSub, Kafka 등)
 
 ## 연결 관리
@@ -349,30 +191,19 @@ class WebSocketClient {
     }, delay);
   }
   
-  send(data) {
-    if (this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(data);
-      return true;
-    }
-    return false;
-  }
-  
   close() {
     this.socket.close();
   }
 }
 
 // 사용 예시
-const orderbookClient = new WebSocketClient(`ws://127.0.0.1:3030/ws/orderbook/BTC-KRW`, {
+const executionsClient = new WebSocketClient('ws://127.0.0.1:3030/ws/executions', {
   onOpen: () => {
-    console.log('오더북 연결 성공');
+    console.log('체결 스트림 연결 성공');
   },
   onMessage: (event) => {
-    const data = JSON.parse(event.data);
-    console.log('오더북 데이터 수신:', data.type);
-  },
-  onReconnect: (attempt) => {
-    console.log(`오더북 재연결 시도 ${attempt}`);
+    const execution = JSON.parse(event.data);
+    console.log(`체결 발생: ${execution.symbol} - ${execution.side}, 가격: ${execution.price}`);
   }
 });
 ```
